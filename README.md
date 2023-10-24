@@ -1,0 +1,2 @@
+# ngs
+random useful scripts
