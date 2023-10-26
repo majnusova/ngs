@@ -1,0 +1,254 @@
+<<<<<<< HEAD
+# Snakemake Tutorial:
+## Creating a pipeline for DEG analysis
+- the goal is to map RNA reads to a reference genome and count how many reads are mapping to a particular gene - this can be used for downstream analyses to study gene expression
+- firstly, th pipeline removes adapters from paired-end RNA reads (Trimmomatic)
+- then, it maps the trimmed reads to a reference genome (HISAT2)
+    - I already have the indexed genome, hence this step is missing from the pipeline! But you can implement this command to index a non-model genome into your pipeline:
+      ```
+      hisat2-build /home/users/mvladka/projects/jotnarlogs/data/rhihy/jgiRhihy1_AssemblyScaffolds.fasta
+      /home/users/mvladka/projects/jotnarlogs/intermediate_files/rhihy_index &> /home/users/mvladka/projects/jotnarlogs/scripts/indexing.log
+      ```
+- lastly, the pipeline counts the reads mapped to individual genes
+## Why pipelines?
+- automatization and parallelizaton - it enables to process multiple samples at once
+- reproducibility
+
+## Prerequisities:
+- what you need:
+      - genome
+      - RNA reads
+      - genome annotation (in gtf format ideally)
+      - conda environment with snakemake, trimmomatic, hisat2, samtools, featurecounts... (use the a yml file in the main folder to install the whole env easily)
+
+# Steps:
+## 1. Create a samples.csv file with samples you want to process
+- you can write it in a text editor and save it with csv extension
+- my samples.csv file looks like this:
+  - name = 4 life stages (zoospore, germling, immature thallus, mature thallus)
+  - specimen = 3 reads replicates for each life stage (zoospore1, zoospore2, zoospore3...)
+  - fq1, fq2 = path to all forward and reverse reads
+```
+name,specimen,fq1,fq2
+germling1,germling,/home/users/mvladka/projects/jotnarlogs/data/rhihy/germling1_SRR17236526_1.fastq.gz,/home/users/mvladka/projects/jotnarlogs/data/rhihy/germling1_SRR17236526_2.fastq.gz
+germling2,germling,/home/users/mvladka/projects/jotnarlogs/data/rhihy/germling2_SRR17236529_1.fastq.gz,/home/users/mvladka/projects/jotnarlogs/data/rhihy/germling2_SRR17236529_2.fastq.gz
+germling3,germling,/home/users/mvladka/projects/jotnarlogs/data/rhihy/germling3_SRR17236530_1.fastq.gz,/home/users/mvladka/projects/jotnarlogs/data/rhihy/germling3_SRR17236530_2.fastq.gz
+ithallus1,ithallus,/home/users/mvladka/projects/jotnarlogs/data/rhihy/ithallus1_SRR17236523_1.fastq.gz,/home/users/mvladka/projects/jotnarlogs/data/rhihy/ithallus1_SRR17236523_2.fastq.gz
+ithallus2,ithallus,/home/users/mvladka/projects/jotnarlogs/data/rhihy/ithallus2_SRR17236524_1.fastq.gz,/home/users/mvladka/projects/jotnarlogs/data/rhihy/ithallus2_SRR17236524_2.fastq.gz
+ithallus3,ithallus,/home/users/mvladka/projects/jotnarlogs/data/rhihy/ithallus3_SRR17236525_1.fastq.gz,/home/users/mvladka/projects/jotnarlogs/data/rhihy/ithallus3_SRR17236525_2.fastq.gz
+mthallus1,mthallus,/home/users/mvladka/projects/jotnarlogs/data/rhihy/mthallus1_SRR17236520_1.fastq.gz,/home/users/mvladka/projects/jotnarlogs/data/rhihy/mthallus1_SRR17236520_2.fastq.gz
+mthallus2,mthallus,/home/users/mvladka/projects/jotnarlogs/data/rhihy/mthallus2_SRR17236521_1.fastq.gz,/home/users/mvladka/projects/jotnarlogs/data/rhihy/mthallus2_SRR17236521_2.fastq.gz
+mthallus3,mthallus,/home/users/mvladka/projects/jotnarlogs/data/rhihy/mthallus3_SRR17236522_1.fastq.gz,/home/users/mvladka/projects/jotnarlogs/data/rhihy/mthallus3_SRR17236522_2.fastq.gz
+zoospore1,zoospore,/home/users/mvladka/projects/jotnarlogs/data/rhihy/zoospore1_SRR17236519_1.fastq.gz,/home/users/mvladka/projects/jotnarlogs/data/rhihy/zoospore1_SRR17236519_2.fastq.gz
+zoospore2,zoospore,/home/users/mvladka/projects/jotnarlogs/data/rhihy/zoospore2_SRR17236527_1.fastq.gz,/home/users/mvladka/projects/jotnarlogs/data/rhihy/zoospore2_SRR17236527_2.fastq.gz
+zoospore3,zoospore,/home/users/mvladka/projects/jotnarlogs/data/rhihy/zoospore3_SRR17236528_1.fastq.gz,/home/users/mvladka/projects/jotnarlogs/data/rhihy/zoospore3_SRR17236528_2.fastq.gz
+```
+
+## 2. Create a Snakefile
+- I saved the Snakefile here (you can use different location but don't forget to change the paths accordingly): /home/users/mvladka/projects/jotnarlogs/cilia_snake/workflows
+1) import modules you need
+```
+import os
+import pandas as pd
+``` 
+2) load the samples from csv file into a dataframe called SAMPLES
+```
+SAMPLES = pd.read_csv('/home/users/mvladka/projects/jotnarlogs/cilia_snake/data/samples.csv').set_index("name")
+```
+- _don't copy the following, just see how it works:_
+    - _set_index("name") = "name" column becomes the row index for the dataframe to uniquely identify each row_
+    - _original samples.csv:_
+    ```
+    name,specimen,fq1,fq2
+    germling1,germling,file1_1.fastq,file1_2.fastq
+    germling2,germling,file2_1.fastq,file2_2.fastq
+    ```
+    - _samples.csv after applying the set_index("name"):_
+    ```
+               specimen           fq1           fq2
+    name                                           
+    germling1  germling  file1_1.fastq  file1_2.fastq
+    germling2  germling  file2_1.fastq  file2_2.fastq
+    ```
+### NOW, SKIP STEPS 3 & 4 AND GO TO "3. Create commons.smk file". COME BACK ONCE YOU WRITE AT LEAST ONE RULE (.SMK FILE) AND CONTINUE WITH "INCLUDE" AND "RULE ALL".
+  
+3) add "include" to include rules from external Snakefiles (once you write them)
+```
+include: "/home/users/mvladka/projects/jotnarlogs/cilia_snake/workflows/rules/commons.smk"
+include: "/home/users/mvladka/projects/jotnarlogs/cilia_snake/workflows/rules/trimming.smk"
+include: "/home/users/mvladka/projects/jotnarlogs/cilia_snake/workflows/rules/hisat2.smk"
+include: "/home/users/mvladka/projects/jotnarlogs/cilia_snake/workflows/rules/featurecounts.smk"
+```
+
+4) add "rule all" 
+- rule all is a terminal rule that defines the final output files (=targets) that you want to generate when you run your the workflow
+- if no target is given at the command line, Snakemake defines the 
+- rule all section is crucial for ensuring that Snakemake knows which targets are the primary objectives of your workflow, allowing it to build the execution plan accordingly.
+
+```
+rule all:
+    input:
+        expand([f"/home/users/mvladka/projects/jotnarlogs/cilia_snake/data/processed/{{sample}}/{{sample}}_featurecounts.txt"], sample=SAMPLES.index)
+```
+
+   - _don't copy the following, just see how it works:_
+       - _SAMPLES.index contains the sample names "germling1", "germling2", "ithallus1" etc., the expand function generates a list of target file paths:_
+
+```
+    [
+        "/home/users/mvladka/projects/jotnarlogs/cilia_snake/data/processed/germling1/germling1_featurecounts.txt",
+        "/home/users/mvladka/projects/jotnarlogs/cilia_snake/data/processed/germling2/germling2_featurecounts.txt",
+        "/home/users/mvladka/projects/jotnarlogs/cilia_snake/data/processed/ithallus1/ithallus1_featurecounts.txt",
+        ...
+    ]
+```
+
+## 3. Create commonsk.smk file
+- in this file, we define functions that can be called in another snakefiles (i.e. we will need it as an input for trimmomatic)
+- this function returns a list of fastq files (for both forward and reverse reads)
+
+```
+def get_fastq_files(wildcards):
+    sample_df = SAMPLES.loc[wildcards.sample]
+    fastq_list = [
+        sample_df["fq1"],
+        sample_df["fq2"],
+    ]
+    return fastq_list
+```
+- _wildcards is a special variable in Snakemake that holds the values of any wildcards used in your rule's input or output file names_
+- _sample_df = SAMPLES.loc[wildcards.sample] uses the wildcards.sample value to look up information from the SAMPLES DataFrame. It retrieves the row of data that corresponds to the current sample specified by the sample wildcard. For example, if wildcards.sample is "germling1," it will extract the row for "germling1" from the DataFrame_
+- _sample_df["fq1"] retrieves the value in the "fq1" column of the sample_df DataFrame, which contains the file path to the first fastq file for the current sample. For example, it might return "/home/users/mvladka/projects/jotnarlogs/data/rhihy/germling1_SRR17236526_1.fastq.gz" for "germling1"_
+
+
+## 4. Create trimming.smk file
+- in this file, we define rules = how we want to run the tool, what is the input, name of the generated output, parameters
+- input is the list with paths to reads generated by the get_fastq_files function ("/home/users/mvladka/projects/jotnarlogs/data/rhihy/germling1_SRR17236526_1.fastq.gz", "/home/users/mvladka/projects/jotnarlogs/data/rhihy/germling1_SRR17236526_2.fastq.gz" etc.)
+- outputs of trimmomatic: forward paired reads (FP), forward unpaired (FU), reverse paired (RP), reverse unpaired (RU)
+- to save the trimmed reads of each sample into a separate folder named after the sample, we use Python F string formatting
+- don't forget to provide a full path to the file with illumina adapters - you should be able to find it in your conda env in the share folder
+- then, you just specify where to save log files with errors (optional), and what would you type in shell
+
+```
+rule trimmomatic_pe:
+    input:
+        reads = get_fastq_files
+    output:
+        # forward reads
+        forward_paired = f"/home/users/mvladka/projects/jotnarlogs/cilia_snake/data/processed/{{sample}}/{{sample}}_FP.fq.gz",
+        forward_unpaired = f"/home/users/mvladka/projects/jotnarlogs/cilia_snake/data/processed/{{sample}}/{{sample}}_FU.fq.gz",
+        # reverse reads
+        reverse_paired = f"/home/users/mvladka/projects/jotnarlogs/cilia_snake/data/processed/{{sample}}/{{sample}}_RP.fq.gz",
+        reverse_unpaired = f"/home/users/mvladka/projects/jotnarlogs/cilia_snake/data/processed/{{sample}}/{{sample}}_RU.fq.gz"
+    params:
+        adapters = "/home/users/mvladka/miniconda3/envs/snakemake/share/trimmomatic/adapters/TruSeq3-PE-2.fa"
+    log:
+        f"/home/users/mvladka/projects/jotnarlogs/cilia_snake/data/logs/{{sample}}_trimmomatic.log"
+    
+    shell:
+        "trimmomatic PE -threads 20 {input.reads} {output.forward_paired} {output.forward_unpaired} {output.reverse_paired} {output.reverse_unpaired} ILLUMINACLIP:{params.adapters}:2:20:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:75 &> {log}"
+```
+
+## 5. Create hisat2.smk file
+- hisat2 maps the trimmed RNA reads to the genome
+- the trimmed paired end reads of the samples serve as input (again, use F string formatting and wildcards to access all the reads found in different folders)
+- again, for each sample, we save output bam files into seperate folders named after the sample: /{{sample}}/{{sample}}
+- don't forget to provide a path to the indexed genome! (The hisat2 command for genome indexing is provided at the beginning of this README.md)
+- shell: mapping the reads (-1 for forward, -2 for reverse) to the indexed genome file and piping the output of hisat to samtools that converts the sam file into a more suitable bam file
+  
+- PS: if your reads were generated using a strandness protocol, don't forget to add the --rna-strandness option
+  
+```
+rule hisat:
+    input:
+        i1 = f"/home/users/mvladka/projects/jotnarlogs/cilia_snake/data/processed/{{sample}}/{{sample}}_FP.fq.gz",
+        i2 = f"/home/users/mvladka/projects/jotnarlogs/cilia_snake/data/processed/{{sample}}/{{sample}}_RP.fq.gz"
+        
+    output:
+        f"/home/users/mvladka/projects/jotnarlogs/cilia_snake/data/processed/{{sample}}/{{sample}}.bam"
+    params:
+        index_file = "/home/users/mvladka/projects/jotnarlogs/intermediate_files/rhihy_index"
+    log:
+        f"/home/users/mvladka/projects/jotnarlogs/cilia_snake/data/logs/{{sample}}_hisat.log"
+    threads:
+        40
+    shell:
+        "hisat2 -q -x {params.index_file} -1 {input.i1} -2 {input.i2} | samtools sort -o {output} &> {log}" 
+```
+## 6. Create featurecount.smk file
+- featurecounts counts number of reads mapped to a particular gene to measure the gene expression level
+- featurecounts requires the bam file generated by hisat2 but also an annotation file containg the coordinates of genes and CDS (these file usually has .gff or .gtf extension)
+
+```
+rule featurecounts:
+    input:
+        i = f"/home/users/mvladka/projects/jotnarlogs/cilia_snake/data/processed/{{sample}}/{{sample}}.bam",
+        
+    output:
+        f"/home/users/mvladka/projects/jotnarlogs/cilia_snake/data/processed/{{sample}}/{{sample}}_featurecounts.txt"
+
+    params:
+        annotation = "/home/users/mvladka/projects/jotnarlogs/data/rhihy/Rhihy1_GeneCatalog_genes_20151219.gtf"
+
+    log:
+        f"/home/users/mvladka/projects/jotnarlogs/cilia_snake/data/logs/{{sample}}_featurecounts.log"
+    threads:
+        80
+    shell:
+        "featureCounts -a {params.annotation} -o {output} -p {input.i} &> {log}"
+```
+## 7. Go back to step 2 and include all the defined rules and add rule all.
+
+## 8. Create the Snakejob.sh bash script
+- I saved the script here: /home/users/mvladka/projects/jotnarlogs/cilia_snake, so I navigated the script there using cd
+- activate the environment
+
+```
+#!/bin/sh
+#PBS -N snakejob
+#PBS -q batch
+#PBS -l nodes=1:ppn=80
+#PBS -l walltime=999:00:00
+
+cd /home/users/mvladka/projects/jotnarlogs/cilia_snake
+
+source activate snakemake
+
+snakemake --unlock -s workflows/Snakefile
+snakemake --cores 80 -s workflows/Snakefile
+```
+
+- _snakemake --unlock -s is a command that unlocks = runs the pipeline (you need to provide a path to your Snakefile)_
+- _snakemake --cores 80 -s workflows/Snakefile specifies number of CPU, it should allow to process 2 samples at once_
+
+## 9. Test your pipeline
+- snakemake -np # dry run, you need to navigate to the folder with Snakefile or provide a path to it
+- snakemake -n --debug-dag # debug the pipeline
+- snakemake -s workflows/Snakefile --forceall --dag | dot -Tpdf > rulegraph.pdf # generate a graph showing the individual steps of the pipeline
+
+## 10. Run the pipeline
+- qsub Snakejob.sh
+=======
+# Three novel ancestral yet sporadically distributed eukaryotic Ras superfamily proteins: jotnarlogs with a potential functional link to the cilium
+All extant eukaryotes evolved from the LECA by not only retaining its features and acquiring new ones, but also by loosing some of them. Therefore, certain ancestral traits can be secondarily missing from the most familiar eukaryotes (this phenomenon extends even to genes). Such genes are referred to as 'jotnarlogs'. They are defined as genes that are 'found in sufficiently diverse eukaryotic taxonomic supergroups to infer a common origin concurrent with or pre-dating the LECA, but were hidden from previous cell biological investigation due to loss or divergence in yeast and animal model systems'.
+
+Phylogenetic analyses revealed that jotnarlogs can be found even among the Ras superfamily of GTPases. These proteins are a hallmark of eukaryotes due to their diverse cellular functions - they are involved in membrane trafficking, nucleo-cytoplasmic transport, cytoskeletal dynamics, signalling cascades, and biogenesis of the cilium.
+
+Here, we present three new jotnarlogs (RAQ, RAZ, GOR3P) that are unrelated to each other and occupy isolated positions within the Ras superfamily phylogeny. None of these proteins has been experimentally characterized in any species, rendering their cellular role unknown. However, based on the pattern of their occurrence in eukaryotes, it may be speculated that they are functionally connected to the cilium.
+
+# Main goals of the project
+- to map the distribution of RAZ, RAQ, GOR3P jotnarlogs among eukaryotes
+- to infer phylogenetic relationships of RAZ, RAQ, GOR3P (and expand the knowledge about thy phylogeny of GTPases in general)
+- to shed light onto the cellular functions RAZ, RAQ, GOR3P
+- to examine the domains and conserved motives RAZ, RAQ, GOR3P
+- to infer secondary/3D structural predictions
+
+# Main approaches
+- HMM and BLAST searches for the distrinution mapping (including corrections of mispredicted protein models)
+- CLANS analysis to visualize the relationship between proteins based on their all-against-all pairwise sequence similarities
+- MSAs of the jotnarlogs to examine the domains and conserved motives
+- Broccoli tool to infer orthologous groups that can tell us more about the function
+- heatmap of differentialy expressed genes of organisms encoding the three jotnarlogs and possesing cilium 
+- structural modelling - AlphaFold ?
+- experiments - knock-outs ???
+>>>>>>> e6b4358be63ef5d05bc40cea19b429c450ad3beb
