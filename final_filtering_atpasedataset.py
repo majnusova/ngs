@@ -79,7 +79,7 @@ print(len(res2))
 
 # saving deduplicated and filtered sequences into a file
 def save_results(res2): 
-    with open("/home/majnusova/all/projects/bilabrum/results/clans/deduplicated_atpases_final_for_cyto_.fa", "w") as outfile:
+    with open("/home/majnusova/all/projects/bilabrum/results/clans/deduplicated_atpases_for_cytoscape_final.fa", "w") as outfile:
         for prot_name, prot_seq in res2.items():
             outfile.write(f'>{prot_name}\n{prot_seq}\n')
 res3 = save_results(res2)        
