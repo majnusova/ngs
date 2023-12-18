@@ -1,0 +1,28 @@
+import os # os enables to interact with operating system - to create/delete files, folders etc.
+import pandas as pd # working with dataframes 
+
+# loading samples and units information
+SAMPLES = pd.read_csv('/home/users/mvladka/projects/jotnarlogs/cilia_snake/data/samples.csv').set_index("name")
+
+
+
+# including required rules from external Snakefiles
+include: "/home/users/mvladka/projects/jotnarlogs/cilia_snake/workflows/rules/commons.smk"
+include: "/home/users/mvladka/projects/jotnarlogs/cilia_snake/workflows/rules/trimming.smk"
+include: "/home/users/mvladka/projects/jotnarlogs/cilia_snake/workflows/rules/hisat2.smk"
+include: "/home/users/mvladka/projects/jotnarlogs/cilia_snake/workflows/rules/featurecounts.smk"
+
+#rule all:
+    #input:
+        #expand([
+        #f"data/processed/{{sample}}/{{sample}}.bam"],
+        #sample=SAMPLES.index),
+
+# rule all is a terminal rule specifying which targets we want to generate
+# expand function creates a list of target file paths for each sample in the samples.csv file; it replaces {{sample}} with the names of the samples from the samples.csv file.
+
+
+
+rule all:
+    input:
+        "/home/users/mvladka/projects/jotnarlogs/cilia_snake/data/processed/featurecounts/aurantiochytrium_combined_featurecounts.txt"
