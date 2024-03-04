@@ -1,0 +1,244 @@
+# GENOME DECONTAMINATION USING BLOBTOOLS
+
+1. reads trimming using Trimmomatic
+#!/bin/sh
+#PBS -N trim
+#PBS -q batch
+#PBS -l nodes=1:ppn=80
+#PBS -l walltime=999:99:99
+
+
+source activate /home/users/mvladka/miniconda3/envs/assembly-env
+
+cd /home/users/mvladka/projects
+
+trimmomatic PE -threads 20 lane114s005734_1_sequence.fastq lane114s005734_2_sequence.fastq -baseout lane114s005734 ILLUMINACLIP:/home/users/mvladka/miniconda3/envs/assembly-env/share/trimmomatic/adapters/TruSeq3-PE-2.fa:2:20:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:75 &> pseud_dna_trim.log
+
+------------------------------------------------------------------------
+2. mapping DNA reads to the genome by HISAT2
+#!/bin/sh
+#PBS -N hisat2
+#PBS -q batch 
+#PBS -l nodes=1:ppn=60 
+#PBS -l walltime=999:99:99 
+
+source activate snakemake
+
+cd /home/users/mvladka/projects/pseudellipsoidion
+
+hisat2-build /home/users/mvladka/projects/pseudellipsoidion/Pseudellipsoidion_assembly.fasta \
+/home/users/mvladka/projects/pseudellipsoidion/pseudel_index &> /home/users/mvladka/projects/pseudellipsoidion/pseudel_indexing.log
+
+hisat2 -q -x /home/users/mvladka/projects/pseudellipsoidion/pseudel_index \
+-1 lane114s005734_1P -2 lane114s005734_2P -U lane114s005734_1U,lane114s005734_2U \
+| samtools sort -o /home/users/mvladka/projects/pseudellipsoidion/pseudel_dnareads.bam --threads 30 &> /home/users/mvladka/projects/pseudellipsoidion/pseudel_hisat.log
+
+------------------------------------------------------------------------
+3. Create hits file for blobtools using DIAMOND 
+- https://github.com/blobtoolkit/pipeline
+
+download TAXDUMP:
+TAXDUMP=/volumes/databases/taxdump_2021_06
+mkdir -p $TAXDUMP;
+cd $TAXDUMP;
+curl -L ftp://ftp.ncbi.nih.gov/pub/taxonomy/new_taxdump/new_taxdump.tar.gz | tar xzf -;
+cd -;
+
+download uniprot reference: wget http://ftp.ebi.ac.uk/pub/databases/uniprot/current_release/knowledgebase/reference_proteomes/Reference_Proteomes_2024_01.tar.gz
+
+tar xf Reference_Proteomes_2024_01.tar.gz
+------------
+or SIMPLY SKIP THE UNIPROT DOWNLOADING AND GO HERE ON CLUSTER.PRF: cd /mnt/data/eliska/
+
+DIAMOND:
+#!/bin/sh
+#PBS -N diamond
+#PBS -q batch
+#PBS -l nodes=1:ppn=70
+#PBS -l walltime=999:99:99
+
+source activate decontamination
+
+cd /home/users/mvladka/projects/decontamination
+
+diamond blastx \
+ --query /home/users/mvladka/projects/pseudellipsoidion/Pseudellipsoidion_assembly.fasta \
+ --db /mnt/data/eliska/reference_proteomes.dmnd \
+ --outfmt 6  qseqid staxids bitscore qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore \
+ --sensitive \
+ --max-target-seqs 3 \
+ --evalue 1e-25 \
+ --out pseudel_diamond_uniprot.out
+
+# change the 5th column of the pseudel_diamond_uniprot.out in sublime text so you get only IDs in that column:
+ctr+L
+\|([^\|\t]+)\t
+\t
+
+\t[^\t|]*\|
+\t
+
+# blobtools taxify
+blobtools taxify -f edit_pseudel_diamond_uniprot.out -m /mnt/data/eliska/reference_proteomes.taxid_map -s 0 -t 2 -a 0 -b 4 -c 2
+
+
+# index genome for blob using samtools
+
+#!/bin/sh
+#PBS -N index_genome
+#PBS -q batch
+#PBS -l nodes=1:ppn=40
+#PBS -l walltime=999:99:99
+
+source activate snakemake
+
+samtools index /home/users/mvladka/projects/pseudellipsoidion/pseudel_dnareads.bam &> sam.log
+
+# blobtools create
+
+#!/bin/sh
+#PBS -N blbtools
+#PBS -q batch
+#PBS -l nodes=1:ppn=50
+#PBS -l walltime=999:99:99
+
+source activate blob
+
+
+blobtools create -i /home/users/mvladka/projects/pseudellipsoidion/Pseudellipsoidion_assembly.fasta \
+-b /home/users/mvladka/projects/pseudellipsoidion/pseudel_dnareads.bam \
+-t /home/users/mvladka/projects/pseudellipsoidion/decontamination/edit_pseudel_diamond_uniprot.taxified.out \
+--nodes /home/users/mvladka/projects/pseudellipsoidion/decontamination/taxdump/nodes.dmp \
+--names /home/users/mvladka/projects/pseudellipsoidion/decontamination/taxdump/names.dmp \
+-o /home/users/mvladka/projects/pseudellipsoidion/decontamination/my_first_blobplot &> /home/users/mvladka/projects/pseudellipsoidion/blobtools_run.log
+
+# blobview and blobplot
+
+#!/bin/sh
+#PBS -N blobplot
+#PBS -q batch
+#PBS -l nodes=1:ppn=30
+#PBS -l walltime=999:99:99
+
+
+source activate blob
+
+blobtools view \
+-i /home/users/mvladka/projects/pseudellipsoidion/decontamination/my_first_blobplot.blobDB.json \
+-o /home/users/mvladka/projects/pseudellipsoidion/decontamination/ &> /home/users/mvladka/projects/pseudellipsoidion/decontamination/blobview.log
+
+blobtools plot \
+-i /home/users/mvladka/projects/pseudellipsoidion/decontamination/my_first_blobplot.blobDB.json \
+-o /home/users/mvladka/projects/pseudellipsoidion/decontamination/ &> /home/users/mvladka/projects/pseudellipsoidion/decontamination/blobplot.log
+
+----------------------------------------------------------------------
+# Removing contaminants identified by blobtools
+na ncbi taxonomy stahnout IDs vsech bakterii:
+https://www.ncbi.nlm.nih.gov/taxonomy/?term=txid2[Subtree] (download - taxid list option)
+
+output z diamondu:
+ qseqid	       staxids bitscore qseqid              sseqid      pident length mismatch gapopen qstart   qend   sstart  send      evalue      bitscore
+scaffold5_14.0	867726	131	scaffold5_14.0	A0A6H5KVU5	30.7	306	147	5	420	1334	343	584	1.67e-27	131
+
+--------------------------------------------------
+
+#decontaminacni skript od elsky:
+import subprocess
+
+
+#load your working directory
+directory = "/home/majnusova/all/projects/pseudellipsoidion_annotation/results/"
+
+#load the set of bacterial IDs downloaded from ncbi taxonomy
+oomycota = set(open('/home/majnusova/all/projects/pseudellipsoidion_annotation/data/oomycota_taxids.txt').read().split())
+
+#open the diamond output file and a file to write bacterial scaffold names in
+with open(f'{directory}edit_pseudel_diamond_uniprot.out', 'r') as infile:
+    with open(f'{directory}genomic_orgnames_oomycota.txt', 'w') as orgfile:
+	
+    #check the sequence id if it is the same as the previous one, check ids if they are all in bacteria
+        tmp_list = []
+        tmp_seqid = []
+        tmp_pident = []
+        for index, line in enumerate(infile):
+        
+        #check which column in your diamond output is taxid and pident, and modify accordingly
+        #load data into your lists
+            if not tmp_seqid:
+                tmp_seqid.append(line.split('\t')[0])
+                taxid = (line.split('\t')[1])
+                pident = (line.split('\t')[5])
+                tmp_list.append(taxid)
+                tmp_pident.append(pident)
+                #this is a bit weird, it is supposed to take the sequence id :D modify accordingly
+                prevline = (line.split('\t')[:15])
+            elif (line.split('\t')[0]) == tmp_seqid[0]:
+                taxid = (line.split('\t')[1])
+                tmp_list.append(taxid)
+                tmp_seqid.append(line.split('\t')[0])
+                tmp_pident.append(line.split('\t')[5])
+                prevline = (line.split('\t')[:15])
+            #this happens if the script runs across a new scaffold, and evaluates whether the previous scaffold fulfills criteria
+            else:
+                #check if all organism ids in the list are bacterial and all percent identities are above 90, if so, write the seq id into the output file
+                if set(tmp_list).issubset(oomycota) == True and all(round(float(i)) > 90 for i in tmp_pident):
+                    print(prevline)
+                    orgfile.write(prevline[0] + "\n")
+                tmp_list = []
+                tmp_seqid = []
+                tmp_pident = []
+                tmp_seqid.append(line.split('\t')[0])
+                taxid = (line.split('\t')[1])
+                tmp_list.append(taxid)
+                pident = (line.split('\t')[5])
+                tmp_pident.append(pident)
+                prevline = (line.split('\t')[:15])
+
+#if i wanted to do that by taking lines in chunks of 3, this is the way :D
+"""
+        for index, line in enumerate(infile):
+            if (index) % 3 == 0 and index != 0:
+                if set(tmp_list).issubset(bacteria):
+                    orgfile.write(line.split('\t')[0] + "\n")
+                tmp_list = []
+                taxid = (line.split('\t')[1])
+                tmp_list.append(taxid)
+            elif index > 10:
+                break
+            else:
+                taxid = (line.split('\t')[1])
+                tmp_list.append(taxid)
+"""
+
+#extract the transcripts with those ids (depending on the tool you use next, this may not be necessary)
+with open(f'{directory}genomic_oomycota.txt', 'w') as trfile:
+    with open(f'{directory}genomic_orgnames_oomycota.txt', 'r') as orgfile:
+        cmd = f'seqtk subseq /home/majnusova/all/projects/pseudellipsoidion_annotation/data/Pseudellipsoidion_assembly.fasta {directory}genomic_orgnames_oomycota.txt > {directory}genomic_oomycota.txt'
+        proc = subprocess.run(cmd, shell=True)
+
+----------------------------------------------------------------------
+#bbduk filters out bacterial reads (already trimmed + removed adapters by Trimmomatic)
+
+#!/bin/sh
+#PBS -N bbduk
+#PBS -q batch
+#PBS -l nodes=1:ppn=40
+#PBS -l walltime=999:99:99
+
+source activate /home/users/mvladka/miniconda3/envs/decontamination
+cd /home/users/mvladka/projects/pseudellipsoidion
+
+# Filter contamination from paired reads
+bbduk.sh in1=lane114s005734_1P.fastq in2=lane114s005734_2P.fastq out1=filtered_lane114s005734_1P.fastq out2=filtered_lane114s005734_2P.fastq ref=genomic_bacterial.txt k=31 hdist=1 stats=stats_paired.txt &> pair$
+
+# Filter contamination from unpaired reads (from 1U)
+bbduk.sh in=lane114s005734_1U.fastq out=filtered_lane114s005734_1U.fastq ref=genomic_bacterial.txt k=31 hdist=1 stats=stats_1U.txt &> 1U.log
+
+# Filter contamination from unpaired reads (from 2U)
+bbduk.sh in=lane114s005734_2U.fastq out=filtered_lane114s005734_2U.fastq ref=genomic_bacterial.txt k=31 hdist=1 stats=stats_2U.txt &> 2U.log
+
+# reassemble 
+
+
+
+
